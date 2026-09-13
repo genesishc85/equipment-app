@@ -578,16 +578,18 @@ async function handleSave(){
 
   const isNew = !editingId;
   const newItemForSheet = {venue, team, location, type, mode, name, tag, model, iptype, ip, mac, serial, uplink, note};
-  const photosForSheet = [...pendingPhotos];
+  const keptExistingBase64 = existingPhotoKeys
+    .filter(k => !removedPhotoKeys.includes(k))
+    .map(k => photoCache['__form__'+k])
+    .filter(Boolean);
+  const photosForSheet = [...keptExistingBase64, ...pendingPhotos];
 
   try{
     await saveItems();
     showToast(editingId ? '수정되었습니다' : '등록되었습니다');
     clearForm();
     updateVenueList();
-    if(isNew){
-      sendToSheet(newItemForSheet, photosForSheet, '폰등록');
-    }
+    sendToSheet(newItemForSheet, photosForSheet, isNew ? '폰등록' : '폰수정');
   }catch(e){
     showToast('저장 실패, 다시 시도해주세요');
   }
