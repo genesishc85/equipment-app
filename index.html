@@ -328,9 +328,10 @@ if (!window.storage) {
 }
 const SHEET_WEBAPP_URL = 'https://script.google.com/macros/s/AKfycbxMse47GYE1N_AIxj8bdo9Mz3ALOn1vQs3MX2YRpBQwBnkOZz-gelhw7KpP-6xe-4u6rg/exec';
 
-async function sendToSheet(item, photos, source){
+async function sendToSheet(item, photos, source, id){
   try{
     const payload = {
+      id: id,
       출처: source,
       업장: item.venue || '',
       부서팀: item.team || '',
