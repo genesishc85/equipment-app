@@ -567,14 +567,20 @@ async function handleSave(){
     .filter(Boolean);
   const photosForSheet = [...keptExistingBase64, ...pendingPhotos];
 
+  const saveBtn = document.getElementById('save-btn');
+  saveBtn.disabled = true;
+  saveBtn.textContent = '저장 중...';
+
   try{
     await saveItems();
+    await sendToSheet(newItemForSheet, photosForSheet, isNew ? '폰등록' : '폰수정', targetId);
     showToast(editingId ? '수정되었습니다' : '등록되었습니다');
     clearForm();
     updateVenueList();
-    sendToSheet(newItemForSheet, photosForSheet, isNew ? '폰등록' : '폰수정',targetId);
   }catch(e){
     showToast('저장 실패, 다시 시도해주세요');
+  }finally{
+    saveBtn.disabled = false;
   }
 }
 document.getElementById('save-btn').addEventListener('click', handleSave);
