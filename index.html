@@ -278,8 +278,6 @@ if ('serviceWorker' in navigator) {
     <div class="stats" id="stats"></div>
     <div class="action-row">
       <div class="btn btn-sm" onclick="resetFilters()">필터·검색 초기화</div>
-      <div class="btn btn-sm" onclick="seedTestData()">테스트 데이터 넣기</div>
-      <div class="btn btn-sm btn-danger" onclick="clearAllData()">전체 삭제</div>
     </div>
     <div id="list-body"></div>
   </div>
@@ -438,22 +436,6 @@ function compressImage(file, maxDim=900, quality=0.6){
   });
 }
 
-function generatePlaceholderPhoto(label, color){
-  const canvas = document.createElement('canvas');
-  canvas.width = 300; canvas.height = 300;
-  const ctx = canvas.getContext('2d');
-  ctx.fillStyle = color;
-  ctx.fillRect(0,0,300,300);
-  ctx.fillStyle = '#ffffff';
-  ctx.font = 'bold 20px sans-serif';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  const words = label.split(' ');
-  words.forEach((w,i)=>{ ctx.fillText(w, 150, 130 + i*28); });
-  ctx.font = '13px sans-serif';
-  ctx.fillText('(테스트용 이미지)', 150, 130 + words.length*28 + 20);
-  return canvas.toDataURL('image/jpeg', 0.7);
-}
 
 function renderPhotoStrip(){
   const strip = document.getElementById('photo-strip');
@@ -891,45 +873,6 @@ function renderList(){
 
 document.getElementById('search').addEventListener('input', renderList);
 
-async function seedTestData(){
-  const now = Date.now();
-  const sample = [
-    { venue:'블랙스톤 클럽하우스', team:'그린팀', location:'서버실 랙 2단', type:'L2스위치', mode:'', name:'Aruba 6200F-24G', tag:'SW-BSC-01', model:'JL726A', iptype:'고정IP', ip:'10.10.10.11', mac:'AC:A3:1E:11:22:33', serial:'', uplink:'', note:'2층 라운지 담당', photoLabels:['SW-BSC-01 정면','SW-BSC-01 랙 위치'] },
-    { venue:'블랙스톤 클럽하우스', team:'그린팀', location:'프론트 데스크', type:'POS', mode:'', name:'프론트 POS 1번', tag:'', model:'', iptype:'DHCP', ip:'192.168.11.42', mac:'', serial:'SN-POS-0091', uplink:'', note:'' },
-    { venue:'블랙스톤 클럽하우스', team:'F&B팀', location:'레스토랑 카운터', type:'카드결제단말기', mode:'', name:'레스토랑 결제단말기', tag:'', model:'VP3300', iptype:'DHCP', ip:'', mac:'00:1A:2B:33:44:55', serial:'PAY-2201', uplink:'', note:'' },
-    { venue:'블랙스톤 클럽하우스', team:'', location:'로비 천장', type:'CCTV', mode:'', name:'로비 CCTV 1', tag:'', model:'Hanwha XNP-6400', iptype:'고정IP', ip:'10.10.13.21', mac:'', serial:'', uplink:'로비 SW-02 5번 포트', note:'', photoLabels:['로비 CCTV 1'] },
-    { venue:'파인베일 골프클럽', team:'운영팀', location:'2층 사무실', type:'사무용PC', mode:'', name:'예약담당 PC', tag:'', model:'', iptype:'DHCP', ip:'192.168.14.10', mac:'', serial:'', uplink:'', note:'' },
-    { venue:'파인베일 골프클럽', team:'운영팀', location:'라운지', type:'노트북', mode:'', name:'매니저 노트북', tag:'', model:'LG Gram', iptype:'DHCP', ip:'', mac:'', serial:'SN-LG-4402', uplink:'', note:'미디어 프레젠테이션용' },
-    { venue:'파인베일 골프클럽', team:'', location:'통신실', type:'백본망 장비', mode:'', name:'코어 스위치', tag:'CORE-01', model:'Aruba 5406R', iptype:'고정IP', ip:'10.10.10.2', mac:'F4:03:43:AA:BB:CC', serial:'', uplink:'', note:'' },
-    { venue:'파인베일 골프클럽', team:'', location:'프론트', type:'키오스크', mode:'', name:'셀프 체크인 키오스크', tag:'', model:'', iptype:'고정IP', ip:'10.10.15.5', mac:'', serial:'KIOSK-77', uplink:'', note:'' },
-    { venue:'선셋마리나 클럽', team:'', location:'로비', type:'공유기', mode:'브릿지모드', name:'로비 백업 공유기', tag:'', model:'ipTIME A604', iptype:'DHCP', ip:'', mac:'', serial:'', uplink:'', note:'평소엔 예비용' },
-    { venue:'선셋마리나 클럽', team:'', location:'안내데스크', type:'인터넷전화기', mode:'', name:'안내데스크 IP폰', tag:'', model:'', iptype:'DHCP', ip:'192.168.16.30', mac:'', serial:'', uplink:'', note:'' },
-  ];
-  const now2 = new Date().toISOString();
-  const colors = ['#185fa5','#0f6e56','#3b6d11','#a32d2d','#854f0b'];
-  for(let i=0;i<sample.length;i++){
-    const s = sample[i];
-    const id = 'seed'+now+'-'+i;
-    let photoKeys = [];
-    if(s.photoLabels){
-      for(let j=0;j<s.photoLabels.length;j++){
-        const key = 'photo:'+id+':'+j;
-        const img = generatePlaceholderPhoto(s.photoLabels[j], colors[(i+j)%colors.length]);
-        try{ await window.storage.set(key, img, false); photoKeys.push(key); }catch(e){}
-      }
-    }
-    const {photoLabels, ...rest} = s;
-    items.push({ id, photoKeys, createdAt:now2, ...rest });
-  }
-  try{
-    await saveItems();
-    updateVenueList();
-    switchTab('list');
-    showToast('테스트 데이터 10건 추가됨');
-  }catch(e){
-    showToast('테스트 데이터 저장 실패');
-  }
-}
 
 async function clearAllData(){
   if(!confirm('전체 장비 데이터를 삭제할까요? (사진도 함께 삭제됩니다)')) return;
