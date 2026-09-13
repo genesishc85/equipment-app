@@ -572,7 +572,7 @@ async function handleSave(){
     showToast(editingId ? '수정되었습니다' : '등록되었습니다');
     clearForm();
     updateVenueList();
-    sendToSheet(newItemForSheet, photosForSheet, isNew ? '폰등록' : '폰수정');
+    sendToSheet(newItemForSheet, photosForSheet, isNew ? '폰등록' : '폰수정',targetId);
   }catch(e){
     showToast('저장 실패, 다시 시도해주세요');
   }
