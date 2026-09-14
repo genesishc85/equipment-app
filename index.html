@@ -233,7 +233,7 @@ if ('serviceWorker' in navigator) {
 
       <label>사진 (여러 장 추가 가능)</label>
       <div class="photo-input-row">
-        <input type="file" id="f-photo" accept="image/*" style="flex:1;">
+        <input type="file" id="f-photo" accept="image/*" capture="environment" style="flex:1;">
       </div>
       <div class="photo-strip" id="photo-strip"></div>
 
@@ -278,6 +278,7 @@ if ('serviceWorker' in navigator) {
     <div class="stats" id="stats"></div>
     <div class="action-row">
       <div class="btn btn-sm" onclick="resetFilters()">필터·검색 초기화</div>
+      <div class="btn btn-sm" onclick="refreshFromSheet()">↻ 새로고침</div>
     </div>
     <div id="list-body"></div>
   </div>
@@ -326,60 +327,50 @@ if (!window.storage) {
 }
 const SHEET_WEBAPP_URL = 'https://script.google.com/macros/s/AKfycbxMse47GYE1N_AIxj8bdo9Mz3ALOn1vQs3MX2YRpBQwBnkOZz-gelhw7KpP-6xe-4u6rg/exec';
 
-async function sendToSheet(item, photos, source, id){
-  try{
-    const payload = {
-      id: id,
-      출처: source,
-      업장: item.venue || '',
-      부서팀: item.team || '',
-      위치: item.location || '',
-      장비유형: item.type || '',
-      장비명: item.name || '',
-      네임태그: item.tag || '',
-      모델명: item.model || '',
-      MAC주소: item.mac || '',
-      IP구분: item.iptype || '',
-      IP주소: item.ip || '',
-      시리얼번호: item.serial || '',
-      동작모드: item.mode || '',
-      연결된스위치위치: item.uplink || '',
-      메모: item.note || '',
-      photos: photos || []
-    };
-    await fetch(SHEET_WEBAPP_URL, {
-      method: 'POST',
-      mode: 'no-cors',
-      headers: {'Content-Type': 'text/plain;charset=utf-8'},
-      body: JSON.stringify(payload)
-    });
-  }catch(e){
-    console.error('시트 전송 실패', e);
-  }
+// Apps Script(uploadPhotoToDrive)가 만든 file.getUrl() 형태(.../file/d/ID/view)는
+// <img>로 바로 안 뜨므로, 파일 ID를 뽑아 googleusercontent 직링크로 바꿔준다.
+function toDriveImgUrl(url){
+  if(!url) return '';
+  const m = String(url).match(/\/d\/([a-zA-Z0-9_-]+)/) || String(url).match(/[?&]id=([a-zA-Z0-9_-]+)/);
+  return m ? `https://lh3.googleusercontent.com/d/${m[1]}` : url;
 }
 
-const STORE_KEY = 'equipment_list';
+const STORE_KEY = 'equipment_list'; // 오프라인 폴백용 로컬 캐시 키(서버 응답 실패시에만 사용)
 let items = [];
 let editingId = null;
-let pendingPhotos = [];      // 새로 추가되는 사진 (dataURL 배열)
-let existingPhotoKeys = [];  // 수정 중인 항목이 이미 갖고 있는 사진 키
-let removedPhotoKeys = [];   // 수정 중 삭제 표시된 기존 사진 키
+let pendingPhotos = [];      // 새로 추가되는 사진 (dataURL 배열, 저장 시 서버로 업로드됨)
+let existingPhotoUrls = [];  // 수정 중인 항목이 이미 시트에 갖고 있는 사진 URL
+let removedPhotoIdx = [];    // 수정 중 삭제 표시된 existingPhotoUrls의 인덱스
 let filterVenues = [];
 let filterTeams = [];
 let filterTypes = [];
 let expandedSection = null;
-const photoCache = {};       // 목록 렌더링용 캐시: itemId -> [dataUrl, ...]
+const photoCache = {};       // 라이트박스용 캐시: itemId -> [imgUrl, ...]
 
+// 목록은 항상 스프레드시트(Apps Script doGet)가 기준. 실패하면 마지막으로 받아둔 캐시로 폴백.
 async function loadItems(){
   try{
-    const res = await window.storage.get(STORE_KEY);
-    items = res ? JSON.parse(res.value) : [];
+    const res = await fetch(SHEET_WEBAPP_URL, { method:'GET' });
+    const data = await res.json();
+    if(data.result !== 'success' || !Array.isArray(data.items)) throw new Error('bad response');
+    items = data.items;
+    try{ await window.storage.set(STORE_KEY, JSON.stringify(items)); }catch(e){}
   }catch(e){
-    items = [];
+    console.error('시트 목록 조회 실패, 캐시로 대체', e);
+    try{
+      const cached = await window.storage.get(STORE_KEY);
+      items = cached ? JSON.parse(cached.value) : [];
+    }catch(e2){
+      items = [];
+    }
+    showToast('목록 갱신 실패 (마지막 저장본 표시 중)');
   }
 }
-async function saveItems(){
-  await window.storage.set(STORE_KEY, JSON.stringify(items));
+
+async function refreshFromSheet(){
+  await loadItems();
+  updateVenueList();
+  renderList();
 }
 
 function showToast(msg){
@@ -436,13 +427,12 @@ function compressImage(file, maxDim=900, quality=0.6){
   });
 }
 
-
 function renderPhotoStrip(){
   const strip = document.getElementById('photo-strip');
   let html = '';
-  existingPhotoKeys.forEach(key=>{
-    if(removedPhotoKeys.includes(key)) return;
-    html += `<div class="ph-wrap"><img src="${photoCache['__form__'+key]||''}" data-key="${key}"><div class="ph-remove" onclick="removeExistingPhoto('${key}')">×</div></div>`;
+  existingPhotoUrls.forEach((url, idx)=>{
+    if(removedPhotoIdx.includes(idx)) return;
+    html += `<div class="ph-wrap"><img src="${toDriveImgUrl(url)}"><div class="ph-remove" onclick="removeExistingPhoto(${idx})">×</div></div>`;
   });
   pendingPhotos.forEach((dataUrl, idx)=>{
     html += `<div class="ph-wrap"><img src="${dataUrl}"><div class="ph-remove" onclick="removePendingPhoto(${idx})">×</div></div>`;
@@ -450,8 +440,8 @@ function renderPhotoStrip(){
   strip.innerHTML = html;
 }
 
-function removeExistingPhoto(key){
-  removedPhotoKeys.push(key);
+function removeExistingPhoto(idx){
+  removedPhotoIdx.push(idx);
   renderPhotoStrip();
 }
 function removePendingPhoto(idx){
@@ -483,8 +473,8 @@ function clearForm(){
   updateModeVisibility();
   editingId = null;
   pendingPhotos = [];
-  existingPhotoKeys = [];
-  removedPhotoKeys = [];
+  existingPhotoUrls = [];
+  removedPhotoIdx = [];
   document.getElementById('f-photo').value = '';
   renderPhotoStrip();
   document.getElementById('save-btn').textContent = '저장';
@@ -531,56 +521,41 @@ async function handleSave(){
 
   const targetId = editingId || (Date.now().toString(36) + Math.random().toString(36).slice(2,6));
 
-  // 사진 처리: 삭제 표시된 기존 사진 지우고, 새로 추가된 사진 저장
-  let finalPhotoKeys = existingPhotoKeys.filter(k=>!removedPhotoKeys.includes(k));
-  for(const key of removedPhotoKeys){
-    try{ await window.storage.delete(key, false); }catch(e){}
-  }
-  for(let i=0;i<pendingPhotos.length;i++){
-    const key = 'photo:'+targetId+':'+Date.now().toString(36)+i;
-    try{
-      await window.storage.set(key, pendingPhotos[i], false);
-      finalPhotoKeys.push(key);
-    }catch(e){
-      showToast('사진 일부 저장 실패');
-    }
-  }
+  // 유지할 기존 사진 URL(삭제 표시 제외) + 새로 추가된 사진(base64, 서버에서 Drive 업로드)
+  const keepPhotoUrls = existingPhotoUrls.filter((u,idx)=>!removedPhotoIdx.includes(idx));
+  const newPhotos = [...pendingPhotos];
 
-  if(editingId){
-    const idx = items.findIndex(i=>i.id===editingId);
-    if(idx>-1){
-      items[idx] = {...items[idx], venue, team, location, type, mode, name, tag, model, iptype, ip, mac, serial, uplink, note, photoKeys:finalPhotoKeys};
-    }
-  }else{
-    items.push({
-      id: targetId,
-      venue, team, location, type, mode, name, tag, model, iptype, ip, mac, serial, uplink, note, photoKeys:finalPhotoKeys,
-      createdAt: new Date().toISOString()
-    });
-  }
-
-  const isNew = !editingId;
-  const newItemForSheet = {venue, team, location, type, mode, name, tag, model, iptype, ip, mac, serial, uplink, note};
-  const keptExistingBase64 = existingPhotoKeys
-    .filter(k => !removedPhotoKeys.includes(k))
-    .map(k => photoCache['__form__'+k])
-    .filter(Boolean);
-  const photosForSheet = [...keptExistingBase64, ...pendingPhotos];
+  const payload = {
+    id: targetId,
+    출처: editingId ? '폰수정' : '폰등록',
+    업장: venue, 부서팀: team, 위치: location, 장비유형: type, 장비명: name, 네임태그: tag,
+    모델명: model, MAC주소: mac, IP구분: iptype, IP주소: ip, 시리얼번호: serial,
+    동작모드: mode, 연결된스위치위치: uplink, 메모: note,
+    existingPhotos: keepPhotoUrls,
+    photos: newPhotos
+  };
 
   const saveBtn = document.getElementById('save-btn');
+  const prevLabel = saveBtn.textContent;
   saveBtn.disabled = true;
   saveBtn.textContent = '저장 중...';
-
   try{
-    await saveItems();
-    await sendToSheet(newItemForSheet, photosForSheet, isNew ? '폰등록' : '폰수정', targetId);
+    await fetch(SHEET_WEBAPP_URL, {
+      method: 'POST',
+      mode: 'no-cors',
+      headers: {'Content-Type': 'text/plain;charset=utf-8'},
+      body: JSON.stringify(payload)
+    });
     showToast(editingId ? '수정되었습니다' : '등록되었습니다');
     clearForm();
+    await loadItems();
     updateVenueList();
+    switchTab('list');
+    saveBtn.disabled = false;
   }catch(e){
     showToast('저장 실패, 다시 시도해주세요');
-  }finally{
     saveBtn.disabled = false;
+    saveBtn.textContent = prevLabel;
   }
 }
 document.getElementById('save-btn').addEventListener('click', handleSave);
@@ -606,16 +581,9 @@ async function startEdit(id){
   document.getElementById('f-note').value = item.note || '';
   editingId = id;
   pendingPhotos = [];
-  removedPhotoKeys = [];
-  existingPhotoKeys = item.photoKeys ? [...item.photoKeys] : [];
+  removedPhotoIdx = [];
+  existingPhotoUrls = item.photos ? [...item.photos] : [];
   document.getElementById('f-photo').value = '';
-  renderPhotoStrip();
-  for(const key of existingPhotoKeys){
-    try{
-      const res = await window.storage.get(key);
-      if(res) photoCache['__form__'+key] = res.value;
-    }catch(e){}
-  }
   renderPhotoStrip();
   document.getElementById('save-btn').textContent = '수정 완료';
   switchTab('add');
@@ -623,16 +591,15 @@ async function startEdit(id){
 }
 
 async function deleteItem(id){
-  const item = items.find(i=>i.id===id);
-  items = items.filter(i=>i.id!==id);
   try{
-    await saveItems();
-    if(item && item.photoKeys){
-      for(const key of item.photoKeys){
-        try{ await window.storage.delete(key, false); }catch(e){}
-      }
-    }
+    await fetch(SHEET_WEBAPP_URL, {
+      method: 'POST',
+      mode: 'no-cors',
+      headers: {'Content-Type': 'text/plain;charset=utf-8'},
+      body: JSON.stringify({ action: 'delete', id })
+    });
     showToast('삭제되었습니다');
+    await loadItems();
     renderList();
     updateVenueList();
   }catch(e){
@@ -831,7 +798,8 @@ function renderList(){
     byVenue[venue].forEach(item=>{
       staggerIdx++;
       const itemDelay = Math.min(staggerIdx*20,260);
-      const hasPhotos = item.photoKeys && item.photoKeys.length>0;
+      const hasPhotos = item.photos && item.photos.length>0;
+      if(hasPhotos) photoCache[item.id] = item.photos.map(toDriveImgUrl);
       html += `
         <div class="item" style="animation-delay:${itemDelay}ms">          <div class="item-top">
             <div style="flex:1;min-width:0;">
@@ -855,51 +823,17 @@ function renderList(){
             ${item.uplink ? `연결 스위치: ${escapeHtml(item.uplink)}<br>` : ''}
             ${item.note ? escapeHtml(item.note) : ''}
           </div>` : ''}
-          ${hasPhotos ? `<div class="photo-thumb-row" id="thumbs-${item.id}"></div>` : ''}
+          ${hasPhotos ? `<div class="photo-thumb-row">${item.photos.map((url,idx)=>
+            `<img src="${toDriveImgUrl(url)}" onclick="openLightbox('${item.id}',${idx})">`
+          ).join('')}</div>` : ''}
         </div>`;
     });
     html += `</div>`;
   });
   body.innerHTML = html;
-
-  filtered.filter(i=>i.photoKeys && i.photoKeys.length>0).forEach(item=>{
-    Promise.all(item.photoKeys.map(key=>window.storage.get(key).then(r=>r?r.value:null).catch(()=>null)))
-      .then(results=>{
-        const photos = results.filter(Boolean);
-        photoCache[item.id] = photos;
-        const wrap = document.getElementById('thumbs-'+item.id);
-        if(wrap){
-          wrap.innerHTML = photos.map((url,idx)=>
-            `<img src="${url}" onclick="openLightbox('${item.id}',${idx})">`
-          ).join('');
-        }
-      });
-  });
 }
 
 document.getElementById('search').addEventListener('input', renderList);
-
-
-async function clearAllData(){
-  if(!confirm('전체 장비 데이터를 삭제할까요? (사진도 함께 삭제됩니다)')) return;
-  for(const it of items){
-    if(it.photoKeys){
-      for(const key of it.photoKeys){
-        try{ await window.storage.delete(key, false); }catch(e){}
-      }
-    }
-  }
-  items = [];
-  try{
-    await saveItems();
-    updateVenueList();
-    filterVenues = []; filterTeams = []; filterTypes = [];
-    renderList();
-    showToast('전체 삭제됨');
-  }catch(e){
-    showToast('삭제 실패');
-  }
-}
 
 (async function init(){
   await loadItems();
